@@ -1,15 +1,14 @@
-//! The Floating-point Extension (FPv5-D16, the Cortex-M7's), in part: the
-//! extension register loads and stores (VLDR, VSTR, VLDM, VSTM, VPUSH,
-//! VPOP), the transfers between core and extension registers (VMOV of one
-//! or two core registers, of a 32-bit scalar; VMRS, VMSR) and VMOV between
-//! extension registers or of an immediate. The other data-processing
-//! instructions (VADD to VCVT) and the FPv5 additions (VSEL, VMAXNM, VRINT,
-//! VCVTA) are not implemented and report UNDEFINED.
+//! The Floating-point Extension (FPv5-D16, the Cortex-M7's): the extension
+//! register loads and stores (VLDR, VSTR, VLDM, VSTM, VPUSH, VPOP) and the
+//! transfers between core and extension registers (VMOV of one or two core
+//! registers, of a 32-bit scalar; VMRS, VMSR). The data-processing
+//! instructions are in `fp_data`.
 //!
 //! Encodings: Armv7-M Architecture Reference Manual (DDI 0403E.e), A6.4
 //! "Floating-point instruction encoding" and the A7.7 instruction pages.
 
 use super::Fault;
+use crate::isa::arm::aarch32::vfp::Fpscr;
 use crate::isa::arm::common::cpu::CpuExit;
 use crate::isa::arm::cortex_m::cpu::CortexMCpu;
 use crate::isa::arm::cortex_m::ppb::{FPCCR_ASPEN, FPDSCR_MASK};
@@ -22,7 +21,7 @@ pub(in crate::isa::arm::cortex_m) const FPSCR_MASK: u32 = 0xF7C0_009F;
 /// Single-precision registers.
 const S_REGS: u32 = 32;
 /// Double-precision registers of FPv5-D16.
-const D_REGS: u32 = 16;
+pub(super) const D_REGS: u32 = 16;
 
 impl CortexMCpu {
     /// A coprocessor instruction (A5.3.18): the FPU's (CP10 and CP11) when
@@ -32,8 +31,10 @@ impl CortexMCpu {
         if self.vfp.is_none() || coproc & 0b1110 != 0b1010 || !self.fp_access() {
             return Err(Fault::NoCoprocessor(insn));
         }
-        // 0b1111 in bits 31:28: the FPv5 additions.
-        if insn >> 28 != 0b1110 {
+        // 0b1111 in bits 31:28 (T = 1, A6.4): only the FPv5 data-processing
+        // additions; the other T = 1 encodings of CP10 and CP11 are UNDEFINED.
+        let fpv5_addition = insn >> 24 == 0xFE && insn & (1 << 4) == 0;
+        if insn >> 28 != 0b1110 && !fpv5_addition {
             return Err(Fault::Undefined(insn));
         }
         self.fp_check();
@@ -73,25 +74,34 @@ impl CortexMCpu {
             .expect("FP instructions run only with the FPU")
     }
 
-    fn s(&self, n: u32) -> u32 {
+    pub(super) fn s(&self, n: u32) -> u32 {
         self.vfp.as_ref().map_or(0, |v| v.read_s_bits(n as u8))
     }
 
-    fn set_s(&mut self, n: u32, value: u32) {
+    pub(super) fn set_s(&mut self, n: u32, value: u32) {
         self.vfp_mut().write_s_bits(n as u8, value);
     }
 
-    fn d(&self, n: u32) -> u64 {
+    pub(super) fn d(&self, n: u32) -> u64 {
         self.vfp.as_ref().map_or(0, |v| v.read_d_bits(n as u8))
     }
 
-    fn set_d(&mut self, n: u32, value: u64) {
+    pub(super) fn set_d(&mut self, n: u32, value: u64) {
         self.vfp_mut().write_d_bits(n as u8, value);
+    }
+
+    /// The FPSCR, as the arithmetic reads and updates it.
+    pub(super) fn fpscr(&self) -> Fpscr {
+        self.vfp.as_ref().map_or_else(Fpscr::default, |v| v.fpscr)
+    }
+
+    pub(super) fn set_fpscr(&mut self, fpscr: Fpscr) {
+        self.vfp_mut().fpscr = fpscr;
     }
 
     /// The first register of a single (`Vd:D`) or double (`D:Vd`) operand,
     /// from its 4-bit field and its extra bit.
-    fn fp_register(double: bool, field: u32, extra: u32) -> u32 {
+    pub(super) fn fp_register(double: bool, field: u32, extra: u32) -> u32 {
         if double {
             (extra << 4) | field
         } else {
@@ -304,71 +314,6 @@ impl CortexMCpu {
         }
         Ok(CpuExit::Continue)
     }
-
-    /// FP data processing (A6.4): only VMOV (register) and VMOV (immediate)
-    /// are implemented, `1110 1110 1D11 imm4H/opc2 | Vd 101s opc3 M 0 imm4L/Vm`.
-    fn fp_data_processing(&mut self, insn: u32) -> Result<CpuExit, Fault> {
-        // opc1 (bits 23:20) without D (bit 22)
-        let opc1 = (insn >> 20) & 0b1011;
-        let opc2 = (insn >> 16) & 0xF;
-        let opc3 = (insn >> 6) & 3;
-        let double = insn & (1 << 8) != 0;
-        let d = Self::fp_register(double, (insn >> 12) & 0xF, (insn >> 22) & 1);
-        if opc1 != 0b1011 || (double && d >= D_REGS) {
-            return Err(Fault::Undefined(insn));
-        }
-        if opc3 & 1 == 0 {
-            // VMOV (immediate) (A7.7.239): VFPExpandImm of imm4H:imm4L; bits
-            // 7 and 5 are zero.
-            if insn & 0xA0 != 0 {
-                return Err(Fault::Undefined(insn));
-            }
-            let imm8 = (opc2 << 4) | (insn & 0xF);
-            if double {
-                self.set_d(d, expand_imm64(imm8));
-            } else {
-                self.set_s(d, expand_imm32(imm8));
-            }
-            return Ok(CpuExit::Continue);
-        }
-        if opc3 != 0b01 || opc2 != 0 {
-            return Err(Fault::Undefined(insn));
-        }
-        // VMOV (register) (A7.7.240).
-        let m = Self::fp_register(double, insn & 0xF, (insn >> 5) & 1);
-        if double {
-            if m >= D_REGS {
-                return Err(Fault::Undefined(insn));
-            }
-            self.set_d(d, self.d(m));
-        } else {
-            self.set_s(d, self.s(m));
-        }
-        Ok(CpuExit::Continue)
-    }
-}
-
-/// `VFPExpandImm(imm8, 32)`: sign imm8<7>, exponent NOT(imm8<6>) then
-/// imm8<6> five times then imm8<5:4>, fraction imm8<3:0> then 19 zeros.
-fn expand_imm32(imm8: u32) -> u32 {
-    let b6 = (imm8 >> 6) & 1;
-    ((imm8 >> 7) << 31)
-        | ((b6 ^ 1) << 30)
-        | ((b6 * 0b1_1111) << 25)
-        | (((imm8 >> 4) & 3) << 23)
-        | ((imm8 & 0xF) << 19)
-}
-
-/// `VFPExpandImm(imm8, 64)`: sign imm8<7>, exponent NOT(imm8<6>) then
-/// imm8<6> eight times then imm8<5:4>, fraction imm8<3:0> then 48 zeros.
-fn expand_imm64(imm8: u32) -> u64 {
-    let imm8 = u64::from(imm8);
-    let b6 = (imm8 >> 6) & 1;
-    ((imm8 >> 7) << 63)
-        | ((b6 ^ 1) << 62)
-        | ((b6 * 0xFF) << 54)
-        | (((imm8 >> 4) & 3) << 52)
-        | ((imm8 & 0xF) << 48)
 }
 
 #[cfg(test)]

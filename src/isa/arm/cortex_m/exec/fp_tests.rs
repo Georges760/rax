@@ -1,6 +1,7 @@
-//! The Floating-point Extension subset of the Cortex-M7: access control
-//! (CPACR, NOCP), loads, stores and transfers, VMOV, VMRS/VMSR, and the
-//! frame with the FP state on exception entry and return. Expected
+//! The Floating-point Extension of the Cortex-M7 outside data processing
+//! (`fp_data_tests`), and VMOV: access control (CPACR, NOCP), loads, stores
+//! and transfers, VMRS/VMSR, and the frame with the FP state on exception
+//! entry and return. Expected
 //! behaviour follows the Armv7-M ARM (DDI 0403E.e) A7.7 and B1.5 pseudocode.
 
 use crate::isa::arm::common::cpu::{ArmCpu, CpuExit};
@@ -168,13 +169,6 @@ fn vmsr_masks_fpscr_and_vmrs_sets_the_flags() {
     }
     assert_eq!(cpu.r(1), 0xF7C0_009F);
     assert_eq!(cpu.xpsr >> 28, 0xF);
-}
-
-#[test]
-fn unimplemented_fp_data_processing_is_undefined() {
-    // vadd.f32 s0, s1, s2 (EE30 0A81)
-    let mut cpu = m7(&[0x30, 0xEE, 0x81, 0x0A], true);
-    assert!(matches!(cpu.execute_one(), Err(Fault::Undefined(_))));
 }
 
 #[test]

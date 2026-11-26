@@ -7,13 +7,17 @@
 //! and the caller decides whether to take the fault architecturally or to
 //! report it.
 //!
-//! The Floating-point Extension is not implemented: coprocessor instructions
-//! report [`Fault::NoCoprocessor`].
+//! The Floating-point Extension runs when the core has it
+//! (`CortexMCpu::set_floating_point`: FPv5-D16 on the Cortex-M7) and CPACR
+//! gives access to CP10 and CP11: loads, stores and transfers in `fp`, data
+//! processing in `fp_data`. Otherwise coprocessor instructions report
+//! [`Fault::NoCoprocessor`].
 
 mod alu;
 mod control;
 mod dp;
 pub(super) mod fp;
+mod fp_data;
 mod ldst;
 mod mul;
 mod thumb16;
