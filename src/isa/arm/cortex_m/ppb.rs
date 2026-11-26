@@ -70,6 +70,11 @@ pub struct CacheIdentification {
 /// MVFR0-2 of the Cortex-M7 double-precision FPU (FPv5-D16).
 pub(super) const M7_MVFR: [u32; 3] = [0x1011_0221, 0x1200_0011, 0x0000_0040];
 
+/// MVFR0-2 of the Cortex-M4's single-precision FPU (FPv4-SP-D16): no
+/// double precision (MVFR0.FPDP = 0), none of FPv5's miscellaneous
+/// instructions (MVFR2.VFP_Misc = 0). The values QEMU gives its `cortex-m4`.
+pub(super) const M4_MVFR: [u32; 3] = [0x1011_0021, 0x1100_0011, 0x0000_0000];
+
 /// The registers of the Private Peripheral Bus outside the NVIC, SCB and
 /// SysTick models.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

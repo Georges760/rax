@@ -581,5 +581,67 @@ fn reserved_and_absent_encodings_are_undefined() {
     cpu.execute_one().unwrap();
     assert!(matches!(cpu.execute_one(), Err(Fault::Undefined(_))));
 
+    // without double precision (MVFR0.FPDP = 0) a double form is UNDEFINED
+    let mut single_only = m7(&thumb32(0xEE31, 0x0B02));
+    if let Some(vfp) = single_only.vfp.as_mut() {
+        vfp.mvfr0 &= !0xF00;
+    }
+    assert!(matches!(
+        single_only.execute_one(),
+        Err(Fault::Undefined(_))
+    ));
     assert!(fault(0xEE30, 0x0A81).is_none());
+}
+
+#[test]
+fn a_cortex_m4f_has_single_precision_without_fpv5() {
+    /// The instruction on a Cortex-M4F (FPv4-SP-D16), s1 = 1.0, s2 = 2.0.
+    fn m4f(hw1: u16, hw2: u16) -> (Result<(), Fault>, CortexMCpu) {
+        let mut memory = FlatMemory::new(0, 0x1_0000);
+        memory.write(u64::from(CODE), &thumb32(hw1, hw2)).unwrap();
+        let mut cpu = CortexMCpu::new(CortexMVariant::CortexM4, Box::new(memory));
+        cpu.set_floating_point(true);
+        cpu.ppb.cpacr = CPACR_FULL;
+        cpu.pc = CODE;
+        cpu.sp_main = STACK;
+        cpu.set_s(1, ONE);
+        cpu.set_s(2, TWO);
+        (cpu.execute_one().map(|_| ()), cpu)
+    }
+    // vadd.f32 s0, s1, s2 (EE30 0A81)
+    let (result, cpu) = m4f(0xEE30, 0x0A81);
+    assert!(result.is_ok());
+    assert_eq!(cpu.s(0), THREE);
+    // FPv4-SP: vfma.f32 (EEA0 0A81), vsqrt.f32 (EEB1 0AE0), vcvtb.f32.f16
+    // (EEB2 0A60), vcvt.s32.f32 (EEBD 0AE0)
+    for (hw1, hw2) in [
+        (0xEEA0, 0x0A81),
+        (0xEEB1, 0x0AE0),
+        (0xEEB2, 0x0A60),
+        (0xEEBD, 0x0AE0),
+    ] {
+        assert!(m4f(hw1, hw2).0.is_ok(), "{hw1:04X} {hw2:04X}");
+    }
+    // without double precision: vadd.f64 (EE31 0B02), and VCVT between
+    // precisions both ways, vcvt.f64.f32 (EEB7 0AC1, sz = 0) and
+    // vcvt.f32.f64 (EEB7 0BC1); without FPv5's miscellaneous instructions:
+    // vrinta (FEB8 0A60), vrintz (EEB6 0AE0), vrintr (EEB6 0A60), vrintx
+    // (EEB7 0A60), vseleq (FE00 0A81), vmaxnm (FE80 0A81), vcvta (FEBC 0AE0)
+    for (hw1, hw2) in [
+        (0xEE31, 0x0B02),
+        (0xEEB7, 0x0AC1),
+        (0xEEB7, 0x0BC1),
+        (0xFEB8, 0x0A60),
+        (0xEEB6, 0x0AE0),
+        (0xEEB6, 0x0A60),
+        (0xEEB7, 0x0A60),
+        (0xFE00, 0x0A81),
+        (0xFE80, 0x0A81),
+        (0xFEBC, 0x0AE0),
+    ] {
+        assert!(
+            matches!(m4f(hw1, hw2).0, Err(Fault::Undefined(_))),
+            "{hw1:04X} {hw2:04X}"
+        );
+    }
 }

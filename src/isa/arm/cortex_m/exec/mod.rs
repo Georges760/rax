@@ -8,10 +8,10 @@
 //! report it.
 //!
 //! The Floating-point Extension runs when the core has it
-//! (`CortexMCpu::set_floating_point`: FPv5-D16 on the Cortex-M7) and CPACR
-//! gives access to CP10 and CP11: loads, stores and transfers in `fp`, data
-//! processing in `fp_data`. Otherwise coprocessor instructions report
-//! [`Fault::NoCoprocessor`].
+//! (`CortexMCpu::set_floating_point`: FPv5-D16 on the Cortex-M7, FPv4-SP-D16
+//! on the Cortex-M4) and CPACR gives access to CP10 and CP11: loads, stores
+//! and transfers in `fp`, data processing in `fp_data`. Otherwise
+//! coprocessor instructions report [`Fault::NoCoprocessor`].
 
 mod alu;
 mod control;

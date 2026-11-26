@@ -1,8 +1,8 @@
-//! The Floating-point Extension (FPv5-D16, the Cortex-M7's): the extension
-//! register loads and stores (VLDR, VSTR, VLDM, VSTM, VPUSH, VPOP) and the
-//! transfers between core and extension registers (VMOV of one or two core
-//! registers, of a 32-bit scalar; VMRS, VMSR). The data-processing
-//! instructions are in `fp_data`.
+//! The Floating-point Extension (FPv5-D16 of the Cortex-M7, FPv4-SP-D16 of
+//! the Cortex-M4F): the extension register loads and stores (VLDR, VSTR,
+//! VLDM, VSTM, VPUSH, VPOP) and the transfers between core and extension
+//! registers (VMOV of one or two core registers, of a 32-bit scalar; VMRS,
+//! VMSR). The data-processing instructions are in `fp_data`.
 //!
 //! Encodings: Armv7-M Architecture Reference Manual (DDI 0403E.e), A6.4
 //! "Floating-point instruction encoding" and the A7.7 instruction pages.

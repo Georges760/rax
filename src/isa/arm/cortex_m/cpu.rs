@@ -18,7 +18,7 @@ use crate::isa::arm::common::memory::{ArmMemory, FlatMemory, MemoryError, Standa
 use super::exception::number;
 use super::exec::Fault;
 use super::nvic::Nvic;
-use super::ppb::{M7_MVFR, Ppb};
+use super::ppb::{M4_MVFR, M7_MVFR, Ppb};
 use super::scb::{CortexMVariant, Scb, cfsr, hfsr};
 use super::systick::SysTick;
 
@@ -251,14 +251,20 @@ impl CortexMCpu {
         }
     }
 
-    /// Gives a Cortex-M7 its Floating-point Extension, FPv5-D16 (16
-    /// double-precision registers; see [`exec::fp`](super::exec) for the
-    /// instructions implemented), or takes it away. Other variants have none
+    /// Gives the core its Floating-point Extension, or takes it away: FPv5-D16
+    /// on a Cortex-M7 (16 double-precision registers), FPv4-SP-D16 on a
+    /// Cortex-M4 (a Cortex-M4F: single precision only). See
+    /// [`exec`](super::exec) for the instructions. Other variants have none
     /// here.
     pub fn set_floating_point(&mut self, enabled: bool) {
-        self.vfp = (enabled && self.variant == CortexMVariant::CortexM7).then(|| {
+        let features = match self.variant {
+            CortexMVariant::CortexM7 => Some(M7_MVFR),
+            CortexMVariant::CortexM4 => Some(M4_MVFR),
+            _ => None,
+        };
+        self.vfp = features.filter(|_| enabled).map(|features| {
             let mut vfp = VfpState::new();
-            [vfp.mvfr0, vfp.mvfr1, vfp.mvfr2] = M7_MVFR;
+            [vfp.mvfr0, vfp.mvfr1, vfp.mvfr2] = features;
             vfp
         });
         self.ppb.cpacr = 0;

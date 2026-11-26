@@ -1,5 +1,6 @@
 //! Floating-point data processing (Armv7-M ARM, DDI 0403E.e, A6.4, Table
-//! A6-5): the FPv5-D16 instructions of the Cortex-M7.
+//! A6-5): the FPv5-D16 instructions of the Cortex-M7, and the FPv4-SP-D16
+//! subset of the Cortex-M4F.
 //!
 //! - Three registers: VMLA, VMLS, VNMLA, VNMLS, VNMUL, VMUL, VADD, VSUB,
 //!   VDIV, VFMA, VFMS, VFNMA, VFNMS.
@@ -14,8 +15,12 @@
 //! The arithmetic is that of the AArch32 VFP (`aarch32::vfp`): IEEE 754
 //! results under the FPSCR's RMode, FZ, DN and AHP, with the cumulative
 //! exception flags. The M profile has no trapped floating-point exceptions
-//! and no half-precision arithmetic, only conversions. A double register
-//! beyond D15 is UNDEFINED.
+//! and no half-precision arithmetic, only conversions. Without double
+//! precision (MVFR0.FPDP = 0, FPv4-SP) a double-precision form (sz = 1) and
+//! VCVT between precisions are UNDEFINED; without FPv5's miscellaneous
+//! instructions (MVFR2.VFP_Misc below 0b0100, B4.7.4) so are VSEL, VMAXNM,
+//! VMINNM, the VRINTs and the directed VCVTs. A double register beyond D15
+//! is UNDEFINED.
 
 use super::Fault;
 use super::fp::D_REGS;
@@ -125,6 +130,10 @@ impl CortexMCpu {
     /// Data processing: `111T 1110 opc1 opc2 | Vd 101 sz opc3 0 opc4`, T in
     /// bit 28 (Table A6-5).
     pub(super) fn fp_data_processing(&mut self, insn: u32) -> Result<CpuExit, Fault> {
+        let double = insn & (1 << 8) != 0;
+        if double && !self.fp_double_precision() {
+            return Err(Fault::Undefined(insn));
+        }
         if insn >> 28 == 0b1111 {
             return self.fp_v5_addition(insn);
         }
@@ -149,6 +158,19 @@ impl CortexMCpu {
             _ => return Err(Fault::Undefined(insn)),
         };
         self.fp_arithmetic(insn, operation)
+    }
+
+    /// MVFR0.FPDP: double precision is implemented.
+    fn fp_double_precision(&self) -> bool {
+        self.vfp.as_ref().is_some_and(|v| (v.mvfr0 >> 8) & 0xF != 0)
+    }
+
+    /// MVFR2.VFP_Misc = 0b0100: FPv5's selection, directed conversions,
+    /// rounding to integral and maximum and minimum numbers are implemented.
+    fn fp_misc(&self) -> bool {
+        self.vfp
+            .as_ref()
+            .is_some_and(|v| (v.mvfr2 >> 4) & 0xF >= 0b0100)
     }
 
     /// The three-register arithmetic (A7.7.225, 232 to 234, 238, 248, 250,
@@ -215,6 +237,11 @@ impl CortexMCpu {
             return self.fp_move_immediate(insn);
         }
         let op = insn & (1 << 7) != 0;
+        // VRINTR, VRINTZ, VRINTX (opc2 = 011x but VCVT between precisions)
+        let rounds = opc2 == 0b0110 || (opc2 == 0b0111 && !op);
+        if rounds && !self.fp_misc() {
+            return Err(Fault::Undefined(insn));
+        }
         match (opc2, op) {
             (0b0000, false) => self.fp_move_register(insn),
             (0b0000, true) => self.fp_unary(insn, Unary::Vabs),
@@ -389,6 +416,10 @@ impl CortexMCpu {
     /// VCVT between double and single precision (A7.7.230): sz = 1 converts
     /// a double to a single.
     fn fp_convert_precision(&mut self, insn: u32) -> Result<CpuExit, Fault> {
+        // both directions need double precision, sz = 0 included
+        if !self.fp_double_precision() {
+            return Err(Fault::Undefined(insn));
+        }
         let double_to_single = insn & (1 << 8) != 0;
         let mut fpscr = self.fpscr();
         if double_to_single {
@@ -538,7 +569,7 @@ impl CortexMCpu {
 
     /// The FPv5 additions, 0b1111 in bits 31:28 (Table A6-5, T = 1).
     fn fp_v5_addition(&mut self, insn: u32) -> Result<CpuExit, Fault> {
-        if self.in_it_block() {
+        if self.in_it_block() || !self.fp_misc() {
             return Err(Fault::Undefined(insn));
         }
         let op = insn & (1 << 6) != 0;
